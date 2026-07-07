@@ -2,9 +2,37 @@
 #include <iostream>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <thread>
+#include <tuple>
 #include <unistd.h>
+#include <sstream>
 
 using namespace std;
+
+string parse_path(const string& request) {
+    istringstream iss(request);
+    string method, path, version;
+    iss >> method >> path >> version;
+    return path;
+}
+
+tuple<string, string, int> get_request(const string& path) {
+    string body;
+    string status = "OK";
+    int code = 200;
+
+    if (path == "/") {
+        body = "<h1>Home</h1>";
+    } else if (path == "/hello") {
+        body = "<h1>Hello there</h1>";
+    } else {
+        body = "<h1>Not found</h1>";
+        code = 404;
+        status = "Not Found";
+    }
+
+    return make_tuple(body, status, code);
+}
 
 int main() {
     // AF_INET = ipv4, SOCK_STREAM: TCP
@@ -27,17 +55,32 @@ int main() {
         return 1;
     }
 
-    int clientSocket = accept(serverSocket, nullptr, nullptr);
-    if (clientSocket < 0) {
-        perror("accept");
-        return 1;
+    // client connection
+    while (true) {
+        int clientSocket = accept(serverSocket, nullptr, nullptr);
+        if (clientSocket < 0) {
+            perror("accept");
+            continue;
+        }
+    
+        char buffer[1024] = {0};
+        recv(clientSocket, buffer, sizeof(buffer), 0);
+        string path = parse_path(buffer);
+        auto [body, status, code] = get_request(path);
+
+        string response =
+                    "HTTP/1.1 " + to_string(code) + " " + status + "\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Content-Length: " + to_string(body.size()) + "\r\n"
+                    "Connection: close\r\n"
+                    "\r\n" +
+                    body;
+
+        send(clientSocket, response.c_str(), response.size(), 0);
+    
+        close(clientSocket);
     }
-
-    char buffer[1024] = {0};
-    recv(clientSocket, buffer, sizeof(buffer), 0);
-    cout << "Message from client: " << buffer << endl;
-
-    close(clientSocket);
-    close(serverSocket);
+        
+    // close(serverSocket);
     return 0;
 }
