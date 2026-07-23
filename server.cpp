@@ -9,6 +9,22 @@
 
 using namespace std;
 
+struct Response {
+    string body;
+    string status;
+    int code;
+};
+
+struct Socket{
+    int fd;
+
+    Socket(int f) : fd(f) {}
+
+    ~Socket() {
+        if (fd >= 0) close(fd);
+    }
+};
+
 string parse_path(const string& request) {
     istringstream iss(request);
     string method, path, version;
@@ -16,7 +32,7 @@ string parse_path(const string& request) {
     return path;
 }
 
-tuple<string, string, int> get_request(const string& path) {
+Response route_request(const string& path) {
     string body;
     string status = "OK";
     int code = 200;
@@ -31,12 +47,14 @@ tuple<string, string, int> get_request(const string& path) {
         status = "Not Found";
     }
 
-    return make_tuple(body, status, code);
+    return Response{body, status, code};
 }
 
 int main() {
     // AF_INET = ipv4, SOCK_STREAM: TCP
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+    Socket server(serverSocket);
 
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET; // ipv4
@@ -57,30 +75,35 @@ int main() {
 
     // client connection
     while (true) {
-        int clientSocket = accept(serverSocket, nullptr, nullptr);
-        if (clientSocket < 0) {
+        int fd = accept(serverSocket, nullptr, nullptr);
+        Socket client(fd);
+        if (client.fd < 0) {
             perror("accept");
             continue;
         }
-    
+        
+
         char buffer[1024] = {0};
-        recv(clientSocket, buffer, sizeof(buffer), 0);
+        // ssize_t = signed size_t, since recv returns >0, 0 or -1
+        ssize_t bytesRead = recv(client.fd, buffer, sizeof(buffer) - 1, 0);
+        if (bytesRead <= 0) {
+            continue;
+        }
         string path = parse_path(buffer);
-        auto [body, status, code] = get_request(path);
+        auto r = route_request(path);
 
         string response =
-                    "HTTP/1.1 " + to_string(code) + " " + status + "\r\n"
+                    "HTTP/1.1 " + to_string(r.code) + " " + r.status + "\r\n"
                     "Content-Type: text/html\r\n"
-                    "Content-Length: " + to_string(body.size()) + "\r\n"
+                    "Content-Length: " + to_string(r.body.size()) + "\r\n"
                     "Connection: close\r\n"
                     "\r\n" +
-                    body;
+                    r.body;
 
-        send(clientSocket, response.c_str(), response.size(), 0);
-    
-        close(clientSocket);
+        send(client.fd, response.c_str(), response.size(), 0);
+
     }
-        
+
     // close(serverSocket);
     return 0;
 }
